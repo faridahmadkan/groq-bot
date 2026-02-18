@@ -23,96 +23,231 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 
 app.listen(PORT, '0.0.0.0', () => console.log(`✅ Server on port ${PORT}`));
 
-// Bot commands
+// Simple in-memory storage for conversation history
+const userConversations = new Map();
+
+/**
+ * Gets AI response from Groq API with conversation history
+ */
+async function getAIResponse(userMessage, userId) {
+  try {
+    // Get or create user's conversation history
+    if (!userConversations.has(userId)) {
+      userConversations.set(userId, []);
+    }
+    const history = userConversations.get(userId);
+
+    // Add user's new message to history
+    history.push({ role: 'user', content: userMessage });
+
+    // Keep history manageable (last 5 exchanges = 10 messages)
+    const MAX_HISTORY = 10;
+    if (history.length > MAX_HISTORY) {
+      history.splice(0, history.length - MAX_HISTORY);
+    }
+
+    // Call Groq API with WORKING model
+    const chatCompletion = await groq.chat.completions.create({
+      model: "llama3-8b-8192", // UPDATED: This model is currently supported
+      messages: history,
+      temperature: 0.7,
+      max_tokens: 1024,
+    });
+
+    const aiReply = chatCompletion.choices[0]?.message?.content || 'I received an empty response.';
+
+    // Add AI's reply to history
+    history.push({ role: 'assistant', content: aiReply });
+
+    return aiReply;
+
+  } catch (error) {
+    console.error('Groq API Error:', error);
+    
+    // User-friendly error messages
+    if (error.status === 401) {
+      return '❌ Authentication Error: Invalid API key.';
+    } else if (error.status === 404) {
+      return '⚠️ Model not found. Please contact the admin.';
+    } else if (error.status === 429) {
+      return '⚡ Rate Limit: Too many requests. Please wait a moment.';
+    } else if (error.error?.error?.code === 'model_decommissioned') {
+      return '⚠️ The AI model was updated. Please try again (fixed now!).';
+    } else {
+      return `⚠️ AI Service Error: Please try again later.`;
+    }
+  }
+}
+
+/**
+ * Forwards user messages to the admin
+ */
+async function forwardToAdmin(ctx, userMessage) {
+  try {
+    const user = ctx.from;
+    const adminMessage = `
+👤 Message from user:
+ID: ${user.id}
+Name: ${user.first_name} ${user.last_name || ''}
+Username: @${user.username || 'N/A'}
+
+💬 Text:
+${userMessage}
+
+⏰ ${new Date().toLocaleString()}
+    `.trim();
+
+    await bot.telegram.sendMessage(process.env.ADMIN_CHAT_ID || '7826815609', adminMessage);
+  } catch (error) {
+    console.error('Failed to forward to admin:', error.message);
+  }
+}
+
+/**
+ * Splits long messages for Telegram
+ */
+function splitMessage(text, maxLength = 4096) {
+  if (text.length <= maxLength) return [text];
+
+  const parts = [];
+  const lines = text.split('\n');
+  let currentPart = '';
+
+  for (const line of lines) {
+    if (currentPart.length + line.length + 1 <= maxLength) {
+      currentPart += (currentPart ? '\n' : '') + line;
+    } else {
+      if (currentPart) parts.push(currentPart);
+      currentPart = line;
+    }
+  }
+
+  if (currentPart) parts.push(currentPart);
+  return parts;
+}
+
+// ================= BOT COMMANDS =================
+
+// /start command
 bot.start((ctx) => {
-  console.log(`/start from user: ${ctx.from.id}`);
-  ctx.reply(`🤖 Welcome ${ctx.from.first_name}! I'm your AI assistant.`);
+  const welcome = `🤖 Welcome ${ctx.from.first_name}!
+
+I'm your AI assistant powered by Groq's fast language models. Created by Farid Ahmad Khan.
+
+Commands:
+/help - Show help
+/clear - Clear chat history
+/about - Bot info
+/model - Show current AI model
+
+Just send a message to start chatting!`;
+
+  ctx.reply(welcome);
+
+  // Notify admin
+  bot.telegram.sendMessage(
+    process.env.ADMIN_CHAT_ID || '7826815609',
+    `🆕 New user started bot: ${ctx.from.first_name} (ID: ${ctx.from.id})`
+  ).catch(console.error);
 });
 
+// /help command
 bot.help((ctx) => {
   ctx.reply(`Available commands:
-/start - Welcome message
-/help - This menu
+/start - Start the bot
+/help - Show this menu
 /clear - Reset conversation
-/about - Bot info
-/model - Show AI model`);
+/about - About this bot
+/model - Show current AI model
+
+📨 All user messages are forwarded to the admin.`);
 });
 
+// /clear command
 bot.command('clear', (ctx) => {
-  ctx.reply('✅ Conversation cleared!');
+  userConversations.delete(ctx.from.id);
+  ctx.reply('✅ Conversation history cleared! Starting fresh.');
 });
 
+// /about command
 bot.command('about', (ctx) => {
   ctx.reply(`🤖 Telegram AI Bot
-Created by Farid Ahmad Khan
-Model: mixtral-8x7b-32768`);
+Powered by Khan's AI Solutions
+Model: llama3-8b-8192
+Admin ID: ${process.env.ADMIN_CHAT_ID || '7826815609'}
+
+Built for fast, intelligent conversations.`);
 });
 
+// /model command
 bot.command('model', (ctx) => {
-  ctx.reply('Current model: mixtral-8x7b-32768');
+  ctx.reply(`Current AI model: llama3-8b-8192
+
+This model is fast and reliable.`);
 });
+
+// ================= MESSAGE HANDLING =================
 
 // Handle text messages
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
   const userMessage = ctx.message.text;
-  
+
   console.log(`📨 Message from ${userId}: ${userMessage.substring(0, 50)}`);
-  
-  try {
-    await ctx.sendChatAction('typing');
-    
-    console.log('🔄 Calling Groq API...');
-    
-    // Try different model if this fails
-    const response = await groq.chat.completions.create({
-      model: "mixtral-8x7b-32768",  // You can try other models too
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant.' },
-        { role: 'user', content: userMessage }
-      ],
-      temperature: 0.7,
-      max_tokens: 500
-    });
-    
-    console.log('✅ Groq API response received');
-    
-    const aiReply = response.choices[0].message.content;
-    await ctx.reply(aiReply);
-    
-  } catch (error) {
-    console.error('❌ ERROR DETAILS:', error);
-    
-    // Try to send detailed error to admin/console
-    let errorMessage = 'Sorry, an error occurred.';
-    
-    if (error.status === 401) {
-      errorMessage = '❌ Invalid API key. Please check GROQ_API_KEY.';
-    } else if (error.status === 429) {
-      errorMessage = '⚠️ Rate limit exceeded. Please try again later.';
-    } else if (error.code === 'ENOTFOUND') {
-      errorMessage = '🌐 Network error. Cannot reach API.';
-    } else if (error.message) {
-      errorMessage = `⚠️ Error: ${error.message.substring(0, 100)}`;
-    }
-    
-    await ctx.reply(errorMessage);
+
+  // Show typing indicator
+  await ctx.sendChatAction('typing');
+
+  // Forward to admin (optional)
+  await forwardToAdmin(ctx, userMessage).catch(() => {});
+
+  // Get AI response
+  const aiResponse = await getAIResponse(userMessage, userId);
+
+  // Send response (split if too long)
+  const messageParts = splitMessage(aiResponse);
+  for (const part of messageParts) {
+    await ctx.reply(part);
   }
 });
 
-// Error handling
-bot.catch((err, ctx) => {
-  console.error('Bot error:', err);
+// Handle non-text messages
+bot.on(['photo', 'video', 'document', 'voice'], async (ctx) => {
+  const mediaType = ctx.updateSubTypes[0];
+  await ctx.reply(`📁 I received your ${mediaType}. Currently, I can only process text messages.`);
+
+  // Forward media info to admin
+  bot.telegram.sendMessage(
+    process.env.ADMIN_CHAT_ID || '7826815609',
+    `📎 User ${ctx.from.id} sent a ${mediaType}`
+  ).catch(console.error);
 });
 
-// Launch bot
+// ================= ERROR HANDLING =================
+
+bot.catch((err, ctx) => {
+  console.error('Bot Error:', err);
+  ctx.reply('❌ An internal error occurred. Please try again.').catch(() => {});
+});
+
+// ================= START BOT =================
+
 bot.launch()
-  .then(() => console.log('✅ Bot is running!'))
+  .then(() => {
+    console.log('✅ Bot is running!');
+    console.log('🤖 Model: llama3-8b-8192');
+    
+    // Send startup notification
+    bot.telegram.sendMessage(
+      process.env.ADMIN_CHAT_ID || '7826815609',
+      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}`
+    ).catch(console.error);
+  })
   .catch(err => {
     console.error('❌ Failed to start bot:', err);
     process.exit(1);
   });
 
-// Graceful stop
+// Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
