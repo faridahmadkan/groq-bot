@@ -46,11 +46,11 @@ async function getAIResponse(userMessage, userId) {
       history.splice(0, history.length - MAX_HISTORY);
     }
 
-    console.log(`🔄 Calling Groq API for user ${userId} with model: llama3-8b-8192`);
+    console.log(`🔄 Calling Groq API for user ${userId} with model: llama-3.3-70b-versatile`);
     
-    // Call Groq API with Llama 3 8B model
+    // Call Groq API with working model
     const chatCompletion = await groq.chat.completions.create({
-      model: "llama3-8b-8192",
+      model: "llama-3.3-70b-versatile", // Latest working model
       messages: history,
       temperature: 0.7,
       max_tokens: 1024,
@@ -72,30 +72,15 @@ async function getAIResponse(userMessage, userId) {
     if (error.status === 401) {
       return '❌ Authentication Error: Your Groq API key is invalid. Please check the API key in Render environment variables.';
     } else if (error.status === 403) {
-      return '❌ Authorization Error: Your API key does not have permission to use this model.';
+      return '❌ Authorization Error: Your API key does not have permission or your region is blocked. Try changing Render region to Oregon (US).';
     } else if (error.status === 404) {
       return '⚠️ Model not found. Please contact the admin.';
     } else if (error.status === 429) {
       return '⚡ Rate Limit: Too many requests. Please wait a moment.';
-    } else if (error.error?.error?.code === 'model_decommissioned') {
-      // Try alternative model automatically
-      try {
-        console.log('🔄 Model decommissioned, trying alternative model: gemma2-9b-it');
-        const alternativeCompletion = await groq.chat.completions.create({
-          model: "gemma2-9b-it",
-          messages: history,
-          temperature: 0.7,
-          max_tokens: 1024,
-        });
-        const alternativeReply = alternativeCompletion.choices[0]?.message?.content || 'I received an empty response.';
-        history.push({ role: 'assistant', content: alternativeReply });
-        return alternativeReply;
-      } catch (altError) {
-        console.error('❌ Alternative model also failed:', altError);
-        return '⚠️ AI service is temporarily unavailable. Please try again later.';
-      }
+    } else if (error.code === 'ENOTFOUND') {
+      return '🌐 Network Error: Cannot reach Groq API. Check your internet connection.';
     } else {
-      return `⚠️ AI Service Error: Please try again later.`;
+      return `⚠️ AI Service Error: ${error.message || 'Please try again later.'}`;
     }
   }
 }
@@ -194,7 +179,7 @@ bot.command('clear', (ctx) => {
 bot.command('about', (ctx) => {
   ctx.reply(`🤖 Telegram AI Bot
 Powered by Khan's AI Solutions
-Model: llama3-8b-8192 (with fallback to gemma2-9b-it)
+Model: llama-3.3-70b-versatile
 Admin ID: ${process.env.ADMIN_CHAT_ID || '7826815609'}
 
 Built for fast, intelligent conversations.`);
@@ -202,9 +187,9 @@ Built for fast, intelligent conversations.`);
 
 // /model command
 bot.command('model', (ctx) => {
-  ctx.reply(`Current AI model: llama3-8b-8192
+  ctx.reply(`Current AI model: llama-3.3-70b-versatile
 
-If this model fails, it automatically falls back to gemma2-9b-it.`);
+This is the latest Llama 3.3 model.`);
 });
 
 // ================= MESSAGE HANDLING =================
@@ -256,13 +241,12 @@ bot.catch((err, ctx) => {
 bot.launch()
   .then(() => {
     console.log('✅ Bot is running!');
-    console.log('🤖 Primary Model: llama3-8b-8192');
-    console.log('🤖 Fallback Model: gemma2-9b-it');
+    console.log('🤖 Model: llama-3.3-70b-versatile');
     
     // Send startup notification
     bot.telegram.sendMessage(
       process.env.ADMIN_CHAT_ID || '7826815609',
-      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nPrimary Model: llama3-8b-8192\nFallback Model: gemma2-9b-it`
+      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nModel: llama-3.3-70b-versatile`
     ).catch(console.error);
   })
   .catch(err => {
