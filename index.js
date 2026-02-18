@@ -4,7 +4,7 @@ const express = require('express');
 
 // Check environment variables
 if (!process.env.BOT_TOKEN || !process.env.GROQ_API_KEY) {
-  console.error('Missing BOT_TOKEN or GROQ_API_KEY');
+  console.error('❌ Missing BOT_TOKEN or GROQ_API_KEY');
   process.exit(1);
 }
 
@@ -46,14 +46,18 @@ async function getAIResponse(userMessage, userId) {
       history.splice(0, history.length - MAX_HISTORY);
     }
 
-    // Call Groq API with WORKING model
+    console.log(`🔄 Calling Groq API for user ${userId} with model: llama3-8b-8192`);
+    
+    // Call Groq API with Llama 3 8B model
     const chatCompletion = await groq.chat.completions.create({
-      model: "llama3-8b-8192", // UPDATED: This model is currently supported
+      model: "llama3-8b-8192",
       messages: history,
       temperature: 0.7,
       max_tokens: 1024,
     });
 
+    console.log('✅ Groq API response received');
+    
     const aiReply = chatCompletion.choices[0]?.message?.content || 'I received an empty response.';
 
     // Add AI's reply to history
@@ -62,17 +66,34 @@ async function getAIResponse(userMessage, userId) {
     return aiReply;
 
   } catch (error) {
-    console.error('Groq API Error:', error);
+    console.error('❌ Groq API Error Details:', JSON.stringify(error, null, 2));
     
-    // User-friendly error messages
+    // Detailed error handling
     if (error.status === 401) {
-      return '❌ Authentication Error: Invalid API key.';
+      return '❌ Authentication Error: Your Groq API key is invalid. Please check the API key in Render environment variables.';
+    } else if (error.status === 403) {
+      return '❌ Authorization Error: Your API key does not have permission to use this model.';
     } else if (error.status === 404) {
       return '⚠️ Model not found. Please contact the admin.';
     } else if (error.status === 429) {
       return '⚡ Rate Limit: Too many requests. Please wait a moment.';
     } else if (error.error?.error?.code === 'model_decommissioned') {
-      return '⚠️ The AI model was updated. Please try again (fixed now!).';
+      // Try alternative model automatically
+      try {
+        console.log('🔄 Model decommissioned, trying alternative model: gemma2-9b-it');
+        const alternativeCompletion = await groq.chat.completions.create({
+          model: "gemma2-9b-it",
+          messages: history,
+          temperature: 0.7,
+          max_tokens: 1024,
+        });
+        const alternativeReply = alternativeCompletion.choices[0]?.message?.content || 'I received an empty response.';
+        history.push({ role: 'assistant', content: alternativeReply });
+        return alternativeReply;
+      } catch (altError) {
+        console.error('❌ Alternative model also failed:', altError);
+        return '⚠️ AI service is temporarily unavailable. Please try again later.';
+      }
     } else {
       return `⚠️ AI Service Error: Please try again later.`;
     }
@@ -173,7 +194,7 @@ bot.command('clear', (ctx) => {
 bot.command('about', (ctx) => {
   ctx.reply(`🤖 Telegram AI Bot
 Powered by Khan's AI Solutions
-Model: llama3-8b-8192
+Model: llama3-8b-8192 (with fallback to gemma2-9b-it)
 Admin ID: ${process.env.ADMIN_CHAT_ID || '7826815609'}
 
 Built for fast, intelligent conversations.`);
@@ -183,7 +204,7 @@ Built for fast, intelligent conversations.`);
 bot.command('model', (ctx) => {
   ctx.reply(`Current AI model: llama3-8b-8192
 
-This model is fast and reliable.`);
+If this model fails, it automatically falls back to gemma2-9b-it.`);
 });
 
 // ================= MESSAGE HANDLING =================
@@ -235,12 +256,13 @@ bot.catch((err, ctx) => {
 bot.launch()
   .then(() => {
     console.log('✅ Bot is running!');
-    console.log('🤖 Model: llama3-8b-8192');
+    console.log('🤖 Primary Model: llama3-8b-8192');
+    console.log('🤖 Fallback Model: gemma2-9b-it');
     
     // Send startup notification
     bot.telegram.sendMessage(
       process.env.ADMIN_CHAT_ID || '7826815609',
-      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}`
+      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nPrimary Model: llama3-8b-8192\nFallback Model: gemma2-9b-it`
     ).catch(console.error);
   })
   .catch(err => {
