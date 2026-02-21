@@ -17,9 +17,6 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Store users who already received the promotion
-const promotedUsers = new Set();
-
 // ================= PROMOTIONAL MESSAGES =================
 // English version (grammatically corrected)
 const ENGLISH_PROMO = `
@@ -45,30 +42,23 @@ app.listen(PORT, '0.0.0.0', () => console.log(`✅ Server on port ${PORT}`));
 const userConversations = new Map();
 
 /**
- * Sends promotional message (only once per user)
+ * Sends promotional message (AFTER EVERY RESPONSE)
  */
 async function sendPromotion(ctx) {
-  const userId = ctx.from.id;
+  // Send English version
+  await ctx.reply(ENGLISH_PROMO, { parse_mode: 'Markdown' });
   
-  // Only send if user hasn't received promotion yet
-  if (!promotedUsers.has(userId)) {
-    promotedUsers.add(userId);
-    
-    // Send English version
-    await ctx.reply(ENGLISH_PROMO, { parse_mode: 'Markdown' });
-    
-    // Send Persian version
-    await ctx.reply(PERSIAN_PROMO, { parse_mode: 'Markdown' });
-    
-    // Send pointing sticker for attention
-    try {
-      await ctx.replyWithSticker('CAACAgIAAxkBAAEMmPZnvO-7WjNcYtX4Z5vT7rqR8r9sUQACAgADwDZPE7aQdR-D4II0NgQ');
-    } catch (stickerError) {
-      console.log('Sticker send failed (optional):', stickerError.message);
-    }
-    
-    console.log(`✅ Promotion sent to user ${userId}`);
+  // Send Persian version
+  await ctx.reply(PERSIAN_PROMO, { parse_mode: 'Markdown' });
+  
+  // Send pointing sticker for attention
+  try {
+    await ctx.replyWithSticker('CAACAgIAAxkBAAEMmPZnvO-7WjNcYtX4Z5vT7rqR8r9sUQACAgADwDZPE7aQdR-D4II0NgQ');
+  } catch (stickerError) {
+    console.log('Sticker send failed (optional):', stickerError.message);
   }
+  
+  console.log(`📢 Promotion sent to user ${ctx.from.id}`);
 }
 
 /**
@@ -276,7 +266,7 @@ bot.on('text', async (ctx) => {
     await ctx.reply(part);
   }
   
-  // Send promotion after response (only once per user)
+  // Send promotion AFTER EVERY response
   await sendPromotion(ctx);
 });
 
@@ -308,15 +298,15 @@ bot.launch()
   .then(() => {
     console.log('✅ Bot is running!');
     console.log('🤖 Model: llama-3.3-70b-versatile');
-    console.log('📢 Promotion message enabled:');
+    console.log('📢 Promotion mode: AFTER EVERY RESPONSE');
     console.log('   - English: Service stop notice with @TalkMatebot');
     console.log('   - Persian: Full translation');
-    console.log('✅ Promotion will be sent once per user');
+    console.log('   - Sticker: Included with every promotion');
     
     // Send startup notification
     bot.telegram.sendMessage(
       process.env.ADMIN_CHAT_ID || '7826815609',
-      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nModel: llama-3.3-70b-versatile\n📢 Promotion enabled for @TalkMatebot`
+      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nModel: llama-3.3-70b-versatile\n📢 Promotion mode: AFTER EVERY RESPONSE`
     ).catch(console.error);
   })
   .catch(err => {
