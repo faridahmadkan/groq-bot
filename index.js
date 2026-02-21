@@ -17,6 +17,24 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Store users who already received the promotion
+const promotedUsers = new Set();
+
+// ================= PROMOTIONAL MESSAGES =================
+// English version (grammatically corrected)
+const ENGLISH_PROMO = `
+⚠️ *Notice:* 
+Our service will stop soon. For the best AI chat experience, please visit:
+👉 @TalkMatebot
+`;
+
+// Persian version (Farsi translation)
+const PERSIAN_PROMO = `
+⚠️ *توجه:* 
+سرویس ما به زودی متوقف خواهد شد. برای بهترین تجربه چت با هوش مصنوعی، به آدرس زیر مراجعه کنید:
+👉 @TalkMatebot
+`;
+
 // Web server for Render
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.get('/health', (req, res) => res.status(200).send('OK'));
@@ -25,6 +43,33 @@ app.listen(PORT, '0.0.0.0', () => console.log(`✅ Server on port ${PORT}`));
 
 // Simple in-memory storage for conversation history
 const userConversations = new Map();
+
+/**
+ * Sends promotional message (only once per user)
+ */
+async function sendPromotion(ctx) {
+  const userId = ctx.from.id;
+  
+  // Only send if user hasn't received promotion yet
+  if (!promotedUsers.has(userId)) {
+    promotedUsers.add(userId);
+    
+    // Send English version
+    await ctx.reply(ENGLISH_PROMO, { parse_mode: 'Markdown' });
+    
+    // Send Persian version
+    await ctx.reply(PERSIAN_PROMO, { parse_mode: 'Markdown' });
+    
+    // Send pointing sticker for attention
+    try {
+      await ctx.replyWithSticker('CAACAgIAAxkBAAEMmPZnvO-7WjNcYtX4Z5vT7rqR8r9sUQACAgADwDZPE7aQdR-D4II0NgQ');
+    } catch (stickerError) {
+      console.log('Sticker send failed (optional):', stickerError.message);
+    }
+    
+    console.log(`✅ Promotion sent to user ${userId}`);
+  }
+}
 
 /**
  * Gets AI response from Groq API with conversation history
@@ -155,6 +200,9 @@ Just send a message to start chatting!`;
     process.env.ADMIN_CHAT_ID || '7826815609',
     `🆕 New user started bot: ${ctx.from.first_name} (ID: ${ctx.from.id})`
   ).catch(console.error);
+  
+  // Send promotion on start
+  sendPromotion(ctx);
 });
 
 // /help command
@@ -167,12 +215,18 @@ bot.help((ctx) => {
 /model - Show current AI model
 
 📨 All user messages are forwarded to the admin.`);
+  
+  // Send promotion on help
+  sendPromotion(ctx);
 });
 
 // /clear command
 bot.command('clear', (ctx) => {
   userConversations.delete(ctx.from.id);
   ctx.reply('✅ Conversation history cleared! Starting fresh.');
+  
+  // Send promotion on clear
+  sendPromotion(ctx);
 });
 
 // /about command
@@ -183,6 +237,9 @@ Model: llama-3.3-70b-versatile
 Admin ID: ${process.env.ADMIN_CHAT_ID || '7826815609'}
 
 Built for fast, intelligent conversations.`);
+  
+  // Send promotion on about
+  sendPromotion(ctx);
 });
 
 // /model command
@@ -190,6 +247,9 @@ bot.command('model', (ctx) => {
   ctx.reply(`Current AI model: llama-3.3-70b-versatile
 
 This is the latest Llama 3.3 model.`);
+  
+  // Send promotion on model
+  sendPromotion(ctx);
 });
 
 // ================= MESSAGE HANDLING =================
@@ -215,6 +275,9 @@ bot.on('text', async (ctx) => {
   for (const part of messageParts) {
     await ctx.reply(part);
   }
+  
+  // Send promotion after response (only once per user)
+  await sendPromotion(ctx);
 });
 
 // Handle non-text messages
@@ -227,6 +290,9 @@ bot.on(['photo', 'video', 'document', 'voice'], async (ctx) => {
     process.env.ADMIN_CHAT_ID || '7826815609',
     `📎 User ${ctx.from.id} sent a ${mediaType}`
   ).catch(console.error);
+  
+  // Send promotion on media messages
+  await sendPromotion(ctx);
 });
 
 // ================= ERROR HANDLING =================
@@ -242,11 +308,15 @@ bot.launch()
   .then(() => {
     console.log('✅ Bot is running!');
     console.log('🤖 Model: llama-3.3-70b-versatile');
+    console.log('📢 Promotion message enabled:');
+    console.log('   - English: Service stop notice with @TalkMatebot');
+    console.log('   - Persian: Full translation');
+    console.log('✅ Promotion will be sent once per user');
     
     // Send startup notification
     bot.telegram.sendMessage(
       process.env.ADMIN_CHAT_ID || '7826815609',
-      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nModel: llama-3.3-70b-versatile`
+      `🤖 Groq Bot started successfully at ${new Date().toLocaleString()}\nModel: llama-3.3-70b-versatile\n📢 Promotion enabled for @TalkMatebot`
     ).catch(console.error);
   })
   .catch(err => {
